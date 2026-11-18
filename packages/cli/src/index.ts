@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import "@opencode/util/omnicode-bootstrap"
 import { ensurePluginRuntime } from "@opencode/plugin/runtime"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Cause, Effect } from "effect"
@@ -96,6 +97,10 @@ const Handlers = Runtime.handlers(Commands, {
     unset: () => import("./commands/handlers/service/unset"),
   },
   serve: () => import("./commands/handlers/serve"),
+  reset: () => import("./commands/handlers/reset"),
+  settings: () => import("./commands/handlers/settings"),
+  usage: () => import("./commands/handlers/usage"),
+  doctor: () => import("./commands/handlers/doctor"),
 })
 
 Effect.gen(function* () {

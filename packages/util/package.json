@@ -61,7 +61,8 @@
     "minimatch": "10.2.5",
     "npm-package-arg": "13.0.2",
     "open": "11.0.4",
-    "pacote": "21.5.1"
+    "pacote": "21.5.1",
+    "undici": "6.21.1"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

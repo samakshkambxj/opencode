@@ -449,6 +449,51 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
         ...PermissionParams,
       },
     }),
+    Spec.make("reset", {
+      description: "Reset local usage counters (shallow by default)",
+      globalFlags: ServerFlags,
+      params: {
+        deep: Flag.Boolean("deep").pipe(
+          Flag.withDescription("Also clear sessions and rotate the network fingerprint"),
+          Flag.withDefault(false),
+        ),
+        nukeCredentials: Flag.Boolean("nuke-credentials").pipe(
+          Flag.withDescription("Delete stored provider credentials too (implies --deep)"),
+          Flag.withDefault(false),
+        ),
+      },
+    }),
+    Spec.make("settings", {
+      description: "Show resolved settings, paths, and environment",
+      globalFlags: ServerFlags,
+      params: {
+        key: Argument.String("key").pipe(
+          Argument.withDescription("Setting name or dotted path, such as model or paths.data"),
+          Argument.optional,
+        ),
+        json: Flag.Boolean("json").pipe(Flag.withDescription("Output settings as JSON"), Flag.withDefault(false)),
+      },
+    }),
+    Spec.make("usage", {
+      description: "Show usage limits, reset times, and local activity",
+      aliases: ["limits"],
+      globalFlags: ServerFlags,
+      params: {
+        days: Flag.Int("days").pipe(
+          Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 365 }))),
+          Flag.withDescription("Days of local activity to show when the workspace has no limits"),
+          Flag.withDefault(30),
+        ),
+        json: Flag.Boolean("json").pipe(Flag.withDescription("Output usage data as JSON"), Flag.withDefault(false)),
+      },
+    }),
+    Spec.make("doctor", {
+      description: "Check the server, data paths, and optional dependencies",
+      globalFlags: ServerFlags,
+      params: {
+        json: Flag.Boolean("json").pipe(Flag.withDescription("Output diagnostics as JSON"), Flag.withDefault(false)),
+      },
+    }),
     Spec.make("session", {
       description: "Manage sessions",
       globalFlags: ServerFlags,

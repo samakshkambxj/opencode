@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP=omnicode
+SOURCE_APP=omnicode
+
+MUTED='\033[0;2m'
+RED='\033[0;31m'
+ORANGE='\033[38;5;214m'
+NC='\033[0m' # No Color
+
+usage() {
+    cat <<EOF
+Omnicode Installer (Linux)
+
+Usage: install-linux.sh [options]
+
+Options:
+    -h, --help              Display this help message
+    -v, --version <version> Install a specific version (e.g., 1.0.0)
+    -b, --binary <path>     Install from a local binary instead of downloading
+        --no-modify-path    Don't modify shell config files (.zshrc, .bashrc, etc.)
+
+Examples:
+    curl -fsSL https://github.com/Tazmyan/Omnicode/releases/latest/download/install-linux.sh | bash
+    ./install-linux.sh --binary /path/to/omnicode
+EOF
+}
+
+requested_version=${VERSION:-}
+no_modify_path=false
+binary_path=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -v|--version)
+            if [[ -n "${2:-}" ]]; then
+                requested_version="$2"
+                shift 2
+            else
+                echo -e "${RED}Error: --version requires a version argument${NC}" >&2
+                exit 1
+            fi
+            ;;
+        -b|--binary)
+            if [[ -n "${2:-}" ]]; then
+                binary_path="$2"
+                shift 2
+            else
+                echo -e "${RED}Error: --binary requires a path argument${NC}" >&2
+                exit 1
+            fi
+            ;;
+        --no-modify-path)
+            no_modify_path=true
+            shift
+            ;;
+        *)
+            echo -e "${ORANGE}Warning: Unknown option '$1'${NC}" >&2
+            shift
+            ;;
+    esac
+done
+
+INSTALL_DIR="$HOME/.local/bin"
+mkdir -p "$INSTALL_DIR"
+
+# If --binary is provided, skip all download/detection logic
+if [ -n "$binary_path" ]; then
+    if [ ! -f "$binary_path" ]; then
+        echo -e "${RED}Error: Binary not found at ${binary_path}${NC}" >&2
+        exit 1
+    fi
+    specific_version="local"
+else
+    raw_os=$(uname -s)
+    os=$(echo "$raw_os" | tr '[:upper:]' '[:lower:]')
+    case "$raw_os" in
+        Linux*) os="linux" ;;
+        *) echo -e "${RED}Unsupported OS: $raw_os. This installer is for Linux only.${NC}" >&2; exit 1 ;;
+    esac
+
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64) arch="x64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *) echo -e "${RED}Unsupported architecture: $arch${NC}" >&2; exit 1 ;;
+    esac
+
+    combo="$os-$arch"
+    case "$combo" in
+        linux-x64|linux-arm64) ;;
+        *)
+            echo -e "${RED}Unsupported OS/Arch: $os/$arch${NC}" >&2
+            exit 1
+            ;;
+    esac
+
+    is_musl=false
+    if command -v ldd >/dev/null 2>&1; then
+        if ldd --version 2>&1 | grep -qi musl; then
+            is_musl=true
+        fi
+    fi
+
+    target="$os-$arch"
+    if [ "$is_musl" = "true" ]; then
+        target="$target-musl"
+    fi
+
+    if ! command -v tar >/dev/null 2>&1; then
+        echo -e "${RED}Error: 'tar' is required but not installed.${NC}" >&2
+        exit 1
+    fi
+
+    package_scope="@opencode"
+    if [ -z "$requested_version" ]; then
+        metadata=$(curl -fsSL "https://github.com/Tazmyan/Omnicode/releases/latest/download/cli.json" 2>/dev/null || true)
+        specific_version=$(echo "$metadata" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+        package=$(echo "$metadata" | sed -n 's/.*"package":"\([^"]*\)".*/\1/p')
+
+        if [ -z "$specific_version" ] || [ -z "$package" ]; then
+            echo -e "${RED}Failed to fetch version information${NC}" >&2
+            exit 1
+        fi
+        package_scope="${package%/cli}"
+    else
+        requested_version="${requested_version#v}"
+        specific_version=$requested_version
+    fi
+
+    package_name="$package_scope/cli-$target"
+    http_status=$(curl -s -o /dev/null -w "%{http_code}" "https://registry.npmjs.org/$package_scope%2fcli-$target/$specific_version" || true)
+    if [ "$http_status" = "404" ] && [ -n "$requested_version" ]; then
+        package_name="@opencode-ai/cli-$target"
+        http_status=$(curl -s -o /dev/null -w "%{http_code}" "https://registry.npmjs.org/@opencode-ai%2fcli-$target/$specific_version" || true)
+    fi
+    if [ "$http_status" = "404" ]; then
+        echo -e "${RED}Error: Version ${specific_version} is not available for $target${NC}" >&2
+        echo -e "${MUTED}Available versions: https://www.npmjs.com/package/$package_name?activeTab=versions${NC}" >&2
+        exit 1
+    fi
+    if [ "$http_status" != "200" ]; then
+        echo -e "${RED}Failed to fetch package information${NC}" >&2
+        exit 1
+    fi
+
+    filename="cli-$target-$specific_version.tgz"
+    url="https://registry.npmjs.org/$package_name/-/$filename"
+    binary_name="$SOURCE_APP"
+fi
+
+print_message() {
+    local level=$1
+    local message=$2
+    local color=""
+    case $level in
+        info) color="${NC}" ;;
+        warning) color="${NC}" ;;
+        error) color="${RED}" ;;
+    esac
+    echo -e "${color}${message}${NC}"
+}
+
+check_version() {
+    if command -v "$APP" >/dev/null 2>&1; then
+        app_path=$(which "$APP")
+        installed_version=$("$APP" --version 2>/dev/null || echo "")
+        installed_version="${installed_version##* }"
+        installed_version="${installed_version#v}"
+        print_message info "${MUTED}Installed version: ${NC}$installed_version."
+    fi
+}
+
+print_progress() {
+    local bytes="$1"
+    local length="$2"
+    [ "$length" -gt 0 ] || return 0
+    local width=50
+    local percent=$(( bytes * 100 / length ))
+    [ "$percent" -gt 100 ] && percent=100
+    local on=$(( percent * width / 100 ))
+    local off=$(( width - on ))
+    local filled=$(printf "%*s" "$on" "")
+    filled=${filled// /■}
+    local empty=$(printf "%*s" "$off" "")
+    empty=${empty// /･}
+    printf "\r${ORANGE}%s%s %3d%%${NC}" "$filled" "$empty" "$percent" >&4
+}
+
+download_with_progress() {
+    local url="$1"
+    local output="$2"
+
+    if [ -t 2 ]; then
+        exec 4>&2
+    else
+        exec 4>/dev/null
+    fi
+
+    local headers="${output}.headers"
+
+    printf "\033[?25l" >&4
+    trap "trap - RETURN; rm -f \"$headers\"; printf '\033[?25h' >&4; exec 4>&-" RETURN
+
+    curl -fsL -D "$headers" -o "$output" "$url" &
+    local curl_pid=$!
+
+    local length bytes
+    while kill -0 "$curl_pid" 2>/dev/null; do
+        if [ -f "$output" ]; then
+            length=$(grep -i '^content-length:' "$headers" 2>/dev/null | tail -n 1 | tr -dc '0-9' || true)
+            bytes=$(ls -ln "$output" | awk '{print $5}')
+            print_progress "$bytes" "${length:-0}"
+        fi
+        sleep 0.1 2>/dev/null || sleep 1
+    done
+
+    local ret=0
+    wait "$curl_pid" || ret=$?
+    if [ "$ret" -eq 0 ]; then
+        bytes=$(ls -ln "$output" | awk '{print $5}')
+        print_progress "$bytes" "$bytes"
+    fi
+    echo "" >&4
+    return $ret
+}
+
+download_and_install() {
+    print_message info "\n${MUTED}Installing ${NC}$APP ${MUTED}version: ${NC}$specific_version"
+    local tmp_dir="${TMPDIR:-/tmp}/omnicode_install_$$"
+    mkdir -p "$tmp_dir"
+
+    if ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
+        local ret=0
+        curl -f -# -L -o "$tmp_dir/$filename" "$url" || ret=$?
+        if [ "$ret" -eq 23 ]; then
+            print_message error "Could not write the download to $tmp_dir. Make sure it has enough free space, or set TMPDIR to another directory, then try again." >&2
+        fi
+        if [ "$ret" -ne 0 ]; then
+            exit "$ret"
+        fi
+    fi
+
+    tar -xzf "$tmp_dir/$filename" -C "$tmp_dir"
+    local installed_binary="$APP"
+    mv "$tmp_dir/package/bin/$binary_name" "$INSTALL_DIR/$installed_binary"
+    chmod 755 "$INSTALL_DIR/$installed_binary"
+    rm -rf "$tmp_dir"
+}
+
+install_from_binary() {
+    print_message info "\n${MUTED}Installing ${NC}$APP ${MUTED}from: ${NC}$binary_path"
+    cp "$binary_path" "$INSTALL_DIR/$APP"
+    chmod 755 "$INSTALL_DIR/$APP"
+}
+
+if [ -n "$binary_path" ]; then
+    install_from_binary
+else
+    check_version
+    download_and_install
+fi
+
+# Add to shell PATH
+XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
+
+current_shell=$(basename "$SHELL")
+case $current_shell in
+    fish)
+        config_files="$HOME/.config/fish/config.fish"
+    ;;
+    zsh)
+        config_files="${ZDOTDIR:-$HOME}/.zshrc ${ZDOTDIR:-$HOME}/.zshenv $XDG_CONFIG_HOME/zsh/.zshrc $XDG_CONFIG_HOME/zsh/.zshenv"
+    ;;
+    bash)
+        config_files="$HOME/.bashrc $HOME/.bash_profile $HOME/.profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
+    ;;
+    ash)
+        config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
+    ;;
+    sh)
+        config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
+    ;;
+    *)
+        config_files="$HOME/.bashrc $HOME/.bash_profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
+    ;;
+esac
+
+add_to_path() {
+    local config_file=$1
+    local command=$2
+    if grep -Fxq "$command" "$config_file"; then
+        print_message info "Command already exists in $config_file, skipping write."
+    elif [[ -w $config_file ]]; then
+        echo -e "\n# omnicode" >> "$config_file"
+        echo "$command" >> "$config_file"
+        print_message info "${MUTED}Successfully added ${NC}omnicode ${MUTED}to \$PATH in ${NC}$config_file"
+    else
+        print_message warning "Manually add the directory to $config_file (or similar):"
+        print_message info "  $command"
+    fi
+}
+
+if [[ "$no_modify_path" != "true" ]]; then
+    config_file=""
+    for file in $config_files; do
+        if [[ -f $file ]]; then
+            config_file=$file
+            break
+        fi
+    done
+
+    if [[ -z $config_file ]]; then
+        case $current_shell in
+            zsh) new_config_file="${ZDOTDIR:-$HOME}/.zshrc" ;;
+            fish) new_config_file="$HOME/.config/fish/config.fish" ;;
+            *) new_config_file="" ;;
+        esac
+        if [[ -n $new_config_file ]] && mkdir -p "$(dirname "$new_config_file")" 2>/dev/null && touch "$new_config_file" 2>/dev/null; then
+            config_file=$new_config_file
+        fi
+    fi
+
+    if [[ -z $config_file ]]; then
+        print_message warning "No config file found for $current_shell. You may need to manually add to PATH:"
+        print_message info "  export PATH=$INSTALL_DIR:\$PATH"
+    elif [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+        case $current_shell in
+            fish)
+                add_to_path "$config_file" "fish_add_path $INSTALL_DIR"
+            ;;
+            zsh|bash|ash|sh|*)
+                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+            ;;
+        esac
+    fi
+fi
+
+echo -e ""
+echo -e "${MUTED}Omnicode is installed.${NC}"
+echo -e ""
+if [[ $current_shell == "fish" ]]; then
+    echo -e "exec \$SHELL   ${MUTED}# Reload PATH (or open a new terminal)${NC}"
+fi
+echo -e "cd <project>  ${MUTED}# Open directory${NC}"
+echo -e "omnicode      ${MUTED}# Run Omnicode${NC}"
+echo -e ""
+echo -e "${MUTED}For more information visit ${NC}https://github.com/Tazmyan/Omnicode${NC}"
+echo -e ""

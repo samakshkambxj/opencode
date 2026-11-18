@@ -119,6 +119,9 @@ import { VcsGitPlugin } from "./vcs/git.js"
 import { VerbosityPlugin } from "./verbosity.js"
 import { WarmingPlugin } from "./warming.js"
 import { WellKnownPlugin } from "../wellknown/plugin.js"
+import { OmnicodeAutoAgentsPlugin } from "./omnicode-auto-agents.js"
+import { OmnicodeUASpoofPlugin } from "./omnicode-ua-spoof.js"
+import { OmnicodeAutoRotatePlugin } from "./omnicode-auto-rotate.js"
 
 const services = [
   Agent.Service,
@@ -266,6 +269,9 @@ const pre = [
   ...OptimizePlugin.Plugins,
   VerbosityPlugin.Plugin,
   IdentityPlugin.Plugin,
+  OmnicodeAutoAgentsPlugin.Plugin,
+  OmnicodeUASpoofPlugin.Plugin,
+  OmnicodeAutoRotatePlugin.Plugin,
   EditTool.Plugin,
   GlobTool.Plugin,
   GrepTool.Plugin,
